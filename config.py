@@ -34,12 +34,12 @@ CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "YOUR_CLOUDINARY_API_
 FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN", "YOUR_FB_PAGE_ACCESS_TOKEN") # Replace with your actual key if not using env var
 INSTAGRAM_BUSINESS_ACCOUNT_ID = os.getenv("INSTAGRAM_BUSINESS_ACCOUNT_ID", "YOUR_INSTAGRAM_BUSINESS_ACCOUNT_ID") # Replace with your actual key if not using env var
 
-# --- NEW: FLUX Image Generation ---
-# Set to True to enable generating images with the FLUX model.
-# If False, it will fall back to Pexels/etc.
-# Note: This requires torch, diffusers, and accelerate to be installed.
+# --- FLUX Image Generation ---
 ENABLE_FLUX_IMAGE_GENERATION = True
+# The model ID from Hugging Face. The script will download it using an access token.
 FLUX_MODEL_ID = "black-forest-labs/FLUX.1-schnell"
+# The script will use the HF_TOKEN secret from your GitHub repository settings.
+HUGGING_FACE_TOKEN = os.getenv("HF_TOKEN")
 
 
 # --- Output Directories and Files ---
