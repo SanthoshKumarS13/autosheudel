@@ -5,7 +5,7 @@ permissions:
 
 on:
   schedule:
-    - cron: '0 */4 * * *'  # Every 4 hours (UTC)
+    - cron: '0 */5 * * *'  # Every 4 hours (UTC)
   workflow_dispatch:        # Manual trigger
 
 jobs:
@@ -28,6 +28,7 @@ jobs:
 
       - name: Run bot script
         env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_MISTRAL_API_KEY: ${{ secrets.OPENROUTER_MISTRAL_API_KEY }}
           OPENROUTER_DEEPSEEK_R1_API_KEY: ${{ secrets.OPENROUTER_DEEPSEEK_R1_API_KEY }}
