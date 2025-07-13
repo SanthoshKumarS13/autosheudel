@@ -7,3 +7,5 @@ cloudinary
 torch
 diffusers
 accelerate
+transformers
+openpyxl
