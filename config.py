@@ -8,6 +8,17 @@ import os
 # Fetch keys from environment variables for deployment.
 # Default values are provided for local testing or if environment variables are not set.
 
+# --- NEW: Hugging Face Configuration ---
+# The script will use the HF_TOKEN secret from your GitHub repository settings or a local .env file.
+HUGGING_FACE_TOKEN = os.getenv("HF_TOKEN", "YOUR_HUGGING_FACE_TOKEN")
+INFERENCE_API_ENDPOINTS = [
+    "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+    "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-3-medium-diffusers",
+    "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
+    "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5",
+    "https://api-inference.huggingface.co/models/CompVis/stable-diffusion-v1-4"
+]
+
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "YOUR_OPENROUTER_DEEPSEEK_API_KEY") # Replace with your actual key if not using env var
 OPENROUTER_MODEL = "deepseek/deepseek-chat-v3-0324:free"
 OPENROUTER_SITE_URL = "https://example.com" # Your site URL for OpenRouter (optional)
@@ -33,21 +44,6 @@ CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "YOUR_CLOUDINARY_API_
 
 FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN", "YOUR_FB_PAGE_ACCESS_TOKEN") # Replace with your actual key if not using env var
 INSTAGRAM_BUSINESS_ACCOUNT_ID = os.getenv("INSTAGRAM_BUSINESS_ACCOUNT_ID", "YOUR_INSTAGRAM_BUSINESS_ACCOUNT_ID") # Replace with your actual key if not using env var
-
-# --- NEW: Hugging Face Inference API ---
-ENABLE_AI_IMAGE_GENERATION = True
-# A list of Inference API endpoints to try in order.
-# Note: Larger models like FLUX may be slow or time out on the free tier.
-INFERENCE_API_ENDPOINTS = [
-    "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
-    "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-3-medium-diffusers",
-    "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
-    "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5",
-    "https://api-inference.huggingface.co/models/CompVis/stable-diffusion-v1-4"
-]
-# The script will use the HF_TOKEN secret from your GitHub repository settings.
-HUGGING_FACE_TOKEN = os.getenv("HF_TOKEN")
-
 
 # --- Output Directories and Files ---
 IMAGE_OUTPUT_DIR = "output/images"
