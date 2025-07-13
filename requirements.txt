@@ -4,3 +4,9 @@ Pillow
 feedparser
 openai
 cloudinary
+torch
+diffusers
+transformers
+accelerate
+safetensors
+openpyxl
