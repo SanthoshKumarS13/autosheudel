@@ -8,12 +8,12 @@ import os
 # Fetch keys from environment variables for deployment.
 # Default values are provided for local testing or if environment variables are not set.
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "sk-or-v1-YOUR_OPENROUTER_DEEPSEEK_API_KEY") # Replace with your actual key if not using env var
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "YOUR_OPENROUTER_DEEPSEEK_API_KEY") # Replace with your actual key if not using env var
 OPENROUTER_MODEL = "deepseek/deepseek-chat-v3-0324:free"
-OPENROUTER_SITE_URL = "https://insightpulse.com" # Your site URL for OpenRouter (optional)
+OPENROUTER_SITE_URL = "https://example.com" # Your site URL for OpenRouter (optional)
 OPENROUTER_SITE_NAME = "Insight Pulse" # Your site name for OpenRouter (optional)
 
-OPENROUTER_MISTRAL_API_KEY = os.getenv("OPENROUTER_MISTRAL_API_KEY", "sk-or-v1-YOUR_OPENROUTER_MISTRAL_API_KEY") # Replace with your actual key if not using env var
+OPENROUTER_MISTRAL_API_KEY = os.getenv("OPENROUTER_MISTRAL_API_KEY", "YOUR_OPENROUTER_MISTRAL_API_KEY") # Replace with your actual key if not using env var
 OPENROUTER_MISTRAL_MODEL = "mistralai/mistral-small-3.2-24b-instruct:free"
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "YOUR_PEXELS_API_KEY") # Replace with your actual key if not using env var
@@ -34,6 +34,14 @@ CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "YOUR_CLOUDINARY_API_
 FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN", "YOUR_FB_PAGE_ACCESS_TOKEN") # Replace with your actual key if not using env var
 INSTAGRAM_BUSINESS_ACCOUNT_ID = os.getenv("INSTAGRAM_BUSINESS_ACCOUNT_ID", "YOUR_INSTAGRAM_BUSINESS_ACCOUNT_ID") # Replace with your actual key if not using env var
 
+# --- NEW: FLUX Image Generation ---
+# Set to True to enable generating images with the FLUX model.
+# If False, it will fall back to Pexels/etc.
+# Note: This requires torch, diffusers, and accelerate to be installed.
+ENABLE_FLUX_IMAGE_GENERATION = True
+FLUX_MODEL_ID = "black-forest-labs/FLUX.1-schnell"
+
+
 # --- Output Directories and Files ---
 IMAGE_OUTPUT_DIR = "output/images"
 JSON_OUTPUT_DIR = "output/json"
@@ -41,7 +49,7 @@ EXCEL_OUTPUT_DIR = "output/excel"
 
 ALL_POSTS_JSON_FILE = f"{JSON_OUTPUT_DIR}/all_posts.json"
 ALL_POSTS_EXCEL_FILE = f"{EXCEL_OUTPUT_DIR}/all_posts.xlsx"
-STYLE_RECOMMENDATIONS_FILE = f"{JSON_OUTPUT_DIR}/style_recommendations.json" # Kept for news analysis
+STYLE_RECOMMENDATIONS_FILE = f"{JSON_OUTPUT_DIR}/style_recommendations.json"
 
 # --- Weekly Analysis Configuration ---
 WEEKLY_ANALYSIS_INTERVAL_DAYS = 7
@@ -57,7 +65,7 @@ FONT_PATH_MEDIUM = "fonts/Montserrat-Medium.ttf"
 FONT_PATH_REGULAR = "fonts/Montserrat-Regular.ttf"
 FONT_PATH_LIGHT = "fonts/Montserrat-Light.ttf"
 
-# --- Colors (RGBA format) - Reverted to original colors ---
+# --- Colors (RGBA format) ---
 COLOR_GRADIENT_TOP_LEFT = (26, 26, 46, 255)
 COLOR_GRADIENT_BOTTOM_RIGHT = (10, 10, 20, 255)
 
@@ -66,14 +74,14 @@ COLOR_RED = (255, 70, 70, 255)
 COLOR_DARK_GRAY = (50, 50, 50, 255)
 COLOR_LIGHT_GRAY_TEXT = (200, 200, 200, 255)
 
-# --- Font Sizes - Reverted to original sizes ---
+# --- Font Sizes ---
 FONT_SIZE_TOP_LEFT_TEXT = 35
 FONT_SIZE_TIMESTAMP = 32
 FONT_SIZE_HEADLINE = 50
 FONT_SIZE_SUMMARY = 40
 FONT_SIZE_SOURCE = 30
 
-# --- Padding and Margins - Reverted to original ---
+# --- Padding and Margins ---
 LEFT_PADDING = 50
 RIGHT_PADDING = 50
 TOP_PADDING = 50
@@ -85,7 +93,7 @@ TOP_LEFT_TEXT_POS_Y = TOP_PADDING
 TIMESTAMP_POS_X_RIGHT_ALIGN = CANVAS_WIDTH - RIGHT_PADDING
 TIMESTAMP_POS_Y = TOP_PADDING
 
-IMAGE_DISPLAY_WIDTH = CANVAS_WIDTH - (LEFT_PADDING) # This seems like an old error, will correct in main.py to be LEFT+RIGHT
+IMAGE_DISPLAY_WIDTH = CANVAS_WIDTH - (LEFT_PADDING)
 IMAGE_DISPLAY_HEIGHT = int(CANVAS_HEIGHT * 0.40)
 IMAGE_TOP_MARGIN_FROM_TOP_ELEMENTS = 50
 IMAGE_ROUND_RADIUS = 10
@@ -120,19 +128,8 @@ DIVIDER_LINE_THICKNESS = 5
 CONTENT_TYPE_CYCLE = [
     'world_news',
     'indian_news',
-    'tech_news', # Kept from your previous code
-    'environmental_news', # Kept from your previous code
+    'tech_news',
+    'environmental_news',
     'world_news',
     'indian_news'
 ]
-
-# --- Local AI Image Generation (NEW) ---
-# Set to True to enable local AI generation, False to always use external APIs first.
-ENABLE_LOCAL_AI_IMAGE_GENERATION = True
-LOCAL_AI_MODEL_NAME = "black-forest-labs/FLUX.1-schnell"
-LOCAL_AI_TORCH_DTYPE = "torch.bfloat16" # Recommended for Flux
-LOCAL_AI_IMAGE_STEPS = 4 # As per your example
-LOCAL_AI_IMAGE_GUIDANCE_SCALE = 0.0 # As per your example
-LOCAL_AI_MAX_SEQUENCE_LENGTH = 256 # As per your example
-LOCAL_AI_IMAGE_WIDTH = 1024 # Flux's native generation size for best quality
-LOCAL_AI_IMAGE_HEIGHT = 720 # Flux's native generation size for best quality
