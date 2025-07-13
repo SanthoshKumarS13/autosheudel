@@ -12,18 +12,21 @@ import random
 import feedparser
 import ssl
 import re
-import sys 
+import sys
 from openai import OpenAI
 import cloudinary
 import cloudinary.uploader
 
 # --- NEW: Imports for FLUX Image Generation ---
+# Use a try-except block to gracefully handle missing libraries
 try:
     import torch
     from diffusers import FluxPipeline
+    # We need transformers as well for the pipeline
+    import transformers
     FLUX_LIBRARIES_AVAILABLE = True
 except ImportError:
-    print("Warning: `torch` or `diffusers` not found. FLUX image generation will be disabled.")
+    print("Warning: `torch`, `diffusers`, or `transformers` not found. FLUX image generation will be disabled.")
     FLUX_LIBRARIES_AVAILABLE = False
 # --- END NEW ---
 
@@ -370,12 +373,11 @@ class FluxImageGenerator:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Initializing FLUX model on device: {self.device}")
         try:
+            # Use bfloat16 for CUDA for better performance, float32 for CPU
             torch_dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
             self.pipe = FluxPipeline.from_pretrained(FLUX_MODEL_ID, torch_dtype=torch_dtype)
-            if self.device == "cuda":
-                self.pipe.to(self.device)
-            else:
-                print("Running FLUX model on CPU. This might be slow.")
+            # Offload to CPU to save VRAM, can be removed if you have enough GPU memory
+            self.pipe.enable_model_cpu_offload()
             print("FLUX.1-schnell model loaded successfully.")
         except Exception as e:
             print(f"CRITICAL: Failed to load FLUX.1-schnell model: {e}")
@@ -389,7 +391,8 @@ class FluxImageGenerator:
             return None
         try:
             print(f"Generating image with FLUX model for prompt: {prompt[:80]}...")
-            generator = torch.Generator(device=self.device).manual_seed(random.randint(0, 2**32 - 1))
+            # Use a random seed for variety
+            generator = torch.Generator(device="cpu").manual_seed(random.randint(0, 2**32 - 1))
             image = self.pipe(
                 prompt=prompt, guidance_scale=0.0, num_inference_steps=4,
                 max_sequence_length=256, generator=generator
@@ -658,7 +661,7 @@ class LocalSaver:
             "Instagram_Posted": post_data.get('instagram_posted', False), "Timestamp": datetime.now(UTC).isoformat(),
             "Source_Type": post_data.get('type'), "Source_URL": post_data.get('url', ''),
             "Original_Source": post_data.get('source', 'N/A'), "Original_Description": post_data.get('original_description', 'N/A'),
-            "Image_Status": post_data.get('image_status', 'unknown') # NEW: Track image status
+            "Image_Status": post_data.get('image_status', 'unknown')
         }
         try:
             existing_data = []
@@ -682,16 +685,89 @@ class LocalSaver:
         except Exception as e:
             print(f"Error saving to Excel file {self.ALL_POSTS_EXCEL_FILE}: {e}")
 
-# (The weekly analysis functions _load_style_recommendations, _save_style_recommendations, perform_weekly_analysis, and check_api_keys remain unchanged)
-# ...
-# NOTE: To save space, the unchanged weekly analysis and API key check functions are omitted here. 
-# They should be kept in your final script as they were.
-# ...
+    def load_all_posts_data(self):
+        """Loads all historical post data from the JSON file."""
+        if os.path.exists(self.ALL_POSTS_JSON_FILE):
+            try:
+                with open(self.ALL_POSTS_JSON_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, Exception) as e:
+                print(f"Error loading {self.ALL_POSTS_JSON_FILE}: {e}. Returning empty list.")
+                return []
+        return []
 
-def _load_style_recommendations(): return {}
-def _save_style_recommendations(rec): pass
-def perform_weekly_analysis(client, saver): return {}
-def check_api_keys(): pass
+
+# --- RESTORED: Weekly Analysis Functions ---
+def _load_style_recommendations():
+    """Loads the last saved style recommendations from a JSON file."""
+    if os.path.exists(STYLE_RECOMMENDATIONS_FILE):
+        try:
+            with open(STYLE_RECOMMENDATIONS_FILE, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, Exception) as e:
+            print(f"Error loading style recommendations: {e}. Returning empty.")
+            return {}
+    return {}
+
+def _save_style_recommendations(recommendations):
+    """Saves the current style recommendations to a JSON file."""
+    os.makedirs(os.path.dirname(STYLE_RECOMMENDATIONS_FILE), exist_ok=True)
+    try:
+        with open(STYLE_RECOMMENDATIONS_FILE, 'w') as f:
+            json.dump(recommendations, f, indent=4)
+    except Exception as e:
+        print(f"Error saving style recommendations: {e}")
+
+def perform_weekly_analysis(mistral_client, local_saver_instance):
+    """Analyzes past week's content and generates style recommendations."""
+    print("\n--- Performing Weekly Performance Analysis ---")
+    all_posts_data = local_saver_instance.load_all_posts_data()
+    one_week_ago = datetime.now(UTC) - timedelta(days=WEEKLY_ANALYSIS_INTERVAL_DAYS)
+    past_week_posts = [p for p in all_posts_data if 'Timestamp' in p and datetime.fromisoformat(p['Timestamp']) >= one_week_ago]
+
+    if not past_week_posts:
+        print("No posts found from the last week to analyze.")
+        return {}
+
+    past_content_summary = "\n".join([f"Post ({p['Timestamp']}):\n  Type: {p.get('Source_Type', 'N/A')}\n  Caption: {p.get('SEO_Caption', 'N/A')}\n  Hashtags: {p.get('Hashtags', 'N/A')}" for p in past_week_posts])
+    system_message = "You are an expert social media content strategist. Analyze past content and provide actionable, creative recommendations to improve future content's reach and engagement. Be specific."
+    prompt = f"Analyze the following past week's content. Provide specific recommendations to improve caption style, hashtag strategy, and content themes.\n\n{past_content_summary}"
+
+    try:
+        response = mistral_client.chat.completions.create(
+            model=OPENROUTER_MISTRAL_MODEL,
+            messages=[{"role": "system", "content": system_message}, {"role": "user", "content": prompt}],
+            extra_headers={"HTTP-Referer": OPENROUTER_SITE_URL, "X-Site-Name": OPENROUTER_SITE_NAME},
+        )
+        recommendations_text = response.choices[0].message.content.strip()
+        if recommendations_text:
+            print("Mistral Analysis Result:\n", recommendations_text)
+            new_recommendations = {"weekly_analysis": recommendations_text, "timestamp": datetime.now(UTC).isoformat()}
+            _save_style_recommendations(new_recommendations)
+            return new_recommendations
+        return {}
+    except Exception as e:
+        print(f"Error calling Mistral for weekly analysis: {e}")
+        return {}
+
+def check_api_keys():
+    """Checks if essential API keys are set."""
+    warnings = []
+    if not OPENROUTER_API_KEY or "YOUR_" in OPENROUTER_API_KEY:
+        warnings.append("OPENROUTER_API_KEY is not set.")
+    if not PEXELS_API_KEY or "YOUR_" in PEXELS_API_KEY:
+        warnings.append("PEXELS_API_KEY is not set.")
+    if not CLOUDINARY_CLOUD_NAME or "YOUR_" in CLOUDINARY_CLOUD_NAME:
+        warnings.append("Cloudinary credentials are not set.")
+    if not FB_PAGE_ACCESS_TOKEN or "YOUR_" in FB_PAGE_ACCESS_TOKEN:
+        warnings.append("Instagram credentials are not set.")
+
+    if warnings:
+        print("\n--- API KEY WARNINGS ---")
+        for warning in warnings:
+            print(f"- {warning}")
+        print("------------------------\n")
+        input("Press Enter to continue (or Ctrl+C to exit)...")
 
 # --- Main Workflow Execution ---
 if __name__ == "__main__":
@@ -706,121 +782,89 @@ if __name__ == "__main__":
     cloudinary_uploader = CloudinaryUploader()
     instagram_poster = InstagramPoster()
     local_saver = LocalSaver(IMAGE_OUTPUT_DIR, JSON_OUTPUT_DIR, EXCEL_OUTPUT_DIR, ALL_POSTS_JSON_FILE, ALL_POSTS_EXCEL_FILE)
+    mistral_client_for_analysis = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_MISTRAL_API_KEY)
 
     # --- NEW: Initialize FLUX Image Generator ---
     flux_image_gen = None
-    if ENABLE_FLUX_IMAGE_GENERATION:
+    if ENABLE_FLUX_IMAGE_GENERATION and FLUX_LIBRARIES_AVAILABLE:
         flux_image_gen = FluxImageGenerator()
     # --- END NEW ---
 
-    mistral_client_for_analysis = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_MISTRAL_API_KEY)
-
     try:
-        recommendation_text_for_llm = ""
+        recommendation_text_for_llm = _load_style_recommendations().get('weekly_analysis', '')
         if workflow_manager.should_run_weekly_analysis():
-            print("Running weekly analysis...")
-            new_recommendations = perform_weekly_analysis(mistral_client_for_analysis, local_saver)
-            if new_recommendations:
-                recommendation_text_for_llm = new_recommendations.get('weekly_analysis', '')
+            new_recs = perform_weekly_analysis(mistral_client_for_analysis, local_saver)
+            if new_recs:
+                recommendation_text_for_llm = new_recs.get('weekly_analysis', '')
             workflow_manager.update_last_analysis_timestamp()
 
-        content_type_for_this_run = workflow_manager.get_current_post_type()
-        post_number_for_this_run = workflow_manager.get_current_post_number()
-        print(f"\n--- Processing Post {post_number_for_this_run}/{len(CONTENT_TYPE_CYCLE)} (Type: {content_type_for_this_run.replace('_', ' ').title()}) ---")
+        content_type = workflow_manager.get_current_post_type()
+        post_num = workflow_manager.get_current_post_number()
+        print(f"\n--- Processing Post {post_num}/{len(CONTENT_TYPE_CYCLE)} (Type: {content_type.replace('_', ' ').title()}) ---")
 
-        post_to_process = news_fetcher.get_single_content_item(content_type_for_this_run)
-        if not post_to_process:
-            print(f"No recent content available for '{content_type_for_this_run}'. Skipping post.")
+        post_data = news_fetcher.get_single_content_item(content_type)
+        if not post_data:
+            print(f"No content for '{content_type}'. Skipping.")
             workflow_manager.increment_post_type_index()
             sys.exit(0)
 
-        post_to_process['original_description'] = post_to_process.get('description', 'N/A')
-        short_title, summary, text_success = text_processor.process_text(
-            post_to_process.get('title', ''), post_to_process.get('description', ''),
-            post_to_process.get('type', ''), style_recommendations=recommendation_text_for_llm
-        )
-        if not text_success:
-            print(f"Text processing failed. Skipping post.")
+        post_data['original_description'] = post_data.get('description', 'N/A')
+        title, summary, success = text_processor.process_text(post_data['title'], post_data['description'], post_data['type'], recommendation_text_for_llm)
+        if not success:
+            print("Text processing failed. Skipping.")
             workflow_manager.increment_post_type_index()
             sys.exit(0)
         
-        post_to_process['title'] = short_title
-        post_to_process['summary'] = summary
-        print(f"Generated Short Title: {short_title}")
-        print(f"Generated Summary: {summary}")
+        post_data['title'], post_data['summary'] = title, summary
+        print(f"Generated Title: {title}\nGenerated Summary: {summary}")
 
         # --- MODIFIED: New Image Generation Flow ---
-        fetched_pil_image = None
-        
-        # 1. Try generating with FLUX
+        pil_image = None
         if flux_image_gen and flux_image_gen.pipe:
-            print("Generating image prompt with Mistral...")
-            image_prompt, prompt_success = caption_generator.generate_image_prompt(short_title, summary)
-            if prompt_success:
-                fetched_pil_image = flux_image_gen.generate_image(image_prompt)
-                if fetched_pil_image:
-                    post_to_process['image_status'] = 'generated_flux'
-                else:
-                    print("FLUX image generation failed. Falling back to stock photo APIs.")
-            else:
-                print("Image prompt generation failed. Falling back to stock photo APIs.")
-
-        # 2. Fallback to stock photo APIs
-        if fetched_pil_image is None:
-            print("Falling back to fetching image from stock photo APIs...")
-            image_search_prompt = short_title + " " + summary
-            fetched_pil_image = image_fetcher.fetch_image(image_search_prompt)
-            if fetched_pil_image:
-                post_to_process['image_status'] = 'fetched_api'
-
-        # 3. Generate placeholder if all else fails
-        if fetched_pil_image is None:
-            print("No image found from any source. Generating placeholder.")
-            placeholder_img = Image.new('RGB', (CANVAS_WIDTH, IMAGE_DISPLAY_HEIGHT), color=(70, 70, 70))
-            draw_placeholder = ImageDraw.Draw(placeholder_img)
-            fallback_font = load_font(FONT_PATH_REGULAR, 50)
-            draw_placeholder.text((100, IMAGE_DISPLAY_HEIGHT // 2 - 25), "IMAGE NOT AVAILABLE", font=fallback_font, fill=(200, 200, 200))
-            fetched_pil_image = placeholder_img
-            post_to_process['image_status'] = 'placeholder'
-        # --- END MODIFIED FLOW ---
-
-        final_post_image = image_local_processor.overlay_text(fetched_pil_image, {
-            'title': post_to_process['title'], 'summary': post_to_process['summary'],
-            'source': post_to_process.get('source', 'Unknown'),
-            'content_type_display': post_to_process.get('type')
-        })
-        post_to_process['final_image'] = final_post_image
-
-        instagram_caption, instagram_hashtags, caption_success = caption_generator.generate_caption_and_hashtags(
-            post_to_process['title'], post_to_process['summary'], style_recommendations=recommendation_text_for_llm
-        )
-        post_to_process['seo_caption'] = instagram_caption
-        post_to_process['hashtags'] = instagram_hashtags
+            img_prompt, prompt_ok = caption_generator.generate_image_prompt(title, summary)
+            if prompt_ok:
+                pil_image = flux_image_gen.generate_image(img_prompt)
+                post_data['image_status'] = 'generated_flux' if pil_image else 'flux_failed'
         
-        local_saver.save_post(post_to_process)
-        
-        post_id_for_upload = post_to_process['Post_ID']
-        local_image_path_for_upload = os.path.join(IMAGE_OUTPUT_DIR, f"{post_id_for_upload}.png")
-        
-        cloudinary_image_url = None
-        if os.path.exists(local_image_path_for_upload):
-            cloudinary_image_url = cloudinary_uploader.upload_image(
-                local_image_path_for_upload, public_id=post_id_for_upload, folder="insight_pulse_posts"
-            )
-        post_to_process['cloudinary_url'] = cloudinary_image_url
+        if not pil_image:
+            print("Falling back to stock photo APIs.")
+            api_prompt = f"{title} {summary}"
+            pil_image = image_fetcher.fetch_image(api_prompt)
+            if pil_image:
+                post_data['image_status'] = 'fetched_api'
 
-        if cloudinary_image_url:
-            combined_caption = f"{post_to_process['seo_caption']}\n\n{' '.join(post_to_process['hashtags'])}"
-            instagram_post_success = instagram_poster.post_image(cloudinary_image_url, combined_caption)
-            post_to_process['instagram_posted'] = instagram_post_success
+        if not pil_image:
+            print("All image sources failed. Generating placeholder.")
+            pil_image = Image.new('RGB', (IMAGE_DISPLAY_WIDTH, IMAGE_DISPLAY_HEIGHT), color=(20, 20, 20))
+            draw = ImageDraw.Draw(pil_image)
+            font = load_font(FONT_PATH_REGULAR, 40)
+            draw.text((50, 50), "Image Not Available", font=font, fill=(200, 200, 200))
+            post_data['image_status'] = 'placeholder'
+        
+        post_data['final_image'] = image_local_processor.overlay_text(pil_image, post_data)
+        
+        caption, hashtags, _ = caption_generator.generate_caption_and_hashtags(title, summary, recommendation_text_for_llm)
+        post_data['seo_caption'], post_data['hashtags'] = caption, hashtags
+
+        local_saver.save_post(post_data)
+        
+        img_path = os.path.join(IMAGE_OUTPUT_DIR, f"{post_data['Post_ID']}.png")
+        cloudinary_url = None
+        if os.path.exists(img_path):
+            cloudinary_url = cloudinary_uploader.upload_image(img_path, post_data['Post_ID'], "insight_pulse_posts")
+        post_data['cloudinary_url'] = cloudinary_url
+
+        if cloudinary_url:
+            full_caption = f"{caption}\n\n{' '.join(hashtags)}"
+            post_data['instagram_posted'] = instagram_poster.post_image(cloudinary_url, full_caption)
         else:
-            post_to_process['instagram_posted'] = False
+            post_data['instagram_posted'] = False
 
         workflow_manager.increment_post_type_index()
-        print(f"Successfully processed post {post_number_for_this_run}/{len(CONTENT_TYPE_CYCLE)}. State updated.")
+        print(f"Successfully processed post {post_num}/{len(CONTENT_TYPE_CYCLE)}. State updated.")
 
     except Exception as e:
-        print(f"\nAn unhandled error occurred during workflow execution: {e}")
+        print(f"\nAn unhandled error occurred: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
