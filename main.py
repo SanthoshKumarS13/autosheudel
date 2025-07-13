@@ -13,22 +13,20 @@ import feedparser
 import ssl
 import re
 import sys
+import traceback
 from openai import OpenAI
 import cloudinary
 import cloudinary.uploader
 
-# --- NEW: Imports for FLUX Image Generation ---
 # Use a try-except block to gracefully handle missing libraries
 try:
     import torch
     from diffusers import FluxPipeline
-    # We need transformers as well for the pipeline
     import transformers
     FLUX_LIBRARIES_AVAILABLE = True
 except ImportError:
     print("Warning: `torch`, `diffusers`, or `transformers` not found. FLUX image generation will be disabled.")
     FLUX_LIBRARIES_AVAILABLE = False
-# --- END NEW ---
 
 
 # Fix for some SSL certificate issues with feedparser on some systems
@@ -46,9 +44,8 @@ from config import (
     PIXABAY_API_KEY, PIXABAY_API_URL,
     CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET,
     FB_PAGE_ACCESS_TOKEN, INSTAGRAM_BUSINESS_ACCOUNT_ID,
-    # --- NEW: FLUX Config Import ---
-    ENABLE_FLUX_IMAGE_GENERATION, FLUX_MODEL_ID,
-    # --- END NEW ---
+    # --- FLUX Config Import ---
+    ENABLE_FLUX_IMAGE_GENERATION, FLUX_MODEL_ID, HUGGING_FACE_TOKEN,
     IMAGE_OUTPUT_DIR, JSON_OUTPUT_DIR, EXCEL_OUTPUT_DIR,
     ALL_POSTS_JSON_FILE, ALL_POSTS_EXCEL_FILE, STYLE_RECOMMENDATIONS_FILE,
     WEEKLY_ANALYSIS_INTERVAL_DAYS,
@@ -232,11 +229,10 @@ class TextProcessor:
         self.site_url = OPENROUTER_SITE_URL
         self.site_name = OPENROUTER_SITE_NAME
         self.client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=self.api_key)
-        self.dummy_draw = ImageDraw.Draw(Image.new('RGB', (1,1)))
 
     def _call_ai_api(self, messages):
         """Helper to call the OpenRouter API. Returns (short_title, summary, success_flag)."""
-        if not self.api_key:
+        if not self.api_key or "YOUR_" in self.api_key:
             print("OPENROUTER_API_KEY is not set. Skipping AI text processing.")
             return "AI Key Error", "Please set your OpenRouter API key in config.py.", False
         try:
@@ -276,11 +272,8 @@ class TextProcessor:
         if not success:
             print("AI text processing failed. Using truncated original description as fallback.")
             fallback_summary = ' '.join(description.split()[:SUMMARY_MAX_WORDS])
-            font_summary = load_font(FONT_PATH_REGULAR, FONT_SIZE_SUMMARY)
-            wrapped_fallback = wrap_text_by_word_count(fallback_summary, font_summary, CANVAS_WIDTH - (LEFT_PADDING + RIGHT_PADDING), max_words=SUMMARY_MAX_WORDS)
-            final_summary = ' '.join(wrapped_fallback)
             final_short_title = ' '.join(title.split()[:TITLE_MAX_WORDS])
-            return final_short_title, final_summary, False
+            return final_short_title, fallback_summary, False
         return short_title, summary, True
 
 
@@ -295,7 +288,7 @@ class CaptionGenerator:
 
     def generate_caption_and_hashtags(self, short_title, summary, style_recommendations=""):
         """Generates an Instagram-style caption and 10 relevant hashtags."""
-        if not self.api_key:
+        if not self.api_key or "YOUR_" in self.api_key:
             print("OPENROUTER_MISTRAL_API_KEY is not set. Skipping caption/hashtag generation.")
             return "Generated caption fallback.", ["#news", "#update"], False
         messages = [
@@ -334,10 +327,9 @@ class CaptionGenerator:
             print(f"Error calling Mistral API for caption/hashtags: {e}")
             return f"Caption generation failed: {e}", ["#api_error", "#news"], False
 
-    # --- NEW: Method to generate image prompt ---
     def generate_image_prompt(self, short_title, summary):
         """Generates a descriptive, text-free image prompt using Mistral."""
-        if not self.api_key:
+        if not self.api_key or "YOUR_" in self.api_key:
             print("OPENROUTER_MISTRAL_API_KEY is not set. Skipping image prompt generation.")
             return f"A symbolic image related to {short_title}", False
         messages = [
@@ -359,29 +351,38 @@ class CaptionGenerator:
         except Exception as e:
             print(f"Error calling Mistral API for image prompt generation: {e}")
             return f"A symbolic image related to {short_title}", False
-    # --- END NEW ---
 
 
-# --- NEW: FLUX Image Generator ---
 class FluxImageGenerator:
-    """Generates images using the FLUX.1-schnell model."""
+    """Generates images by downloading the FLUX.1-schnell model from Hugging Face."""
     def __init__(self):
         self.pipe = None
         if not FLUX_LIBRARIES_AVAILABLE:
             print("FLUX dependencies not installed. FLUX Image Generator is disabled.")
             return
+
+        if not HUGGING_FACE_TOKEN:
+            print("-" * 80)
+            print("CRITICAL: HUGGING_FACE_TOKEN environment variable is not set.")
+            print("Please add a GitHub Secret named HF_TOKEN with your Hugging Face read access token.")
+            print("Image generation will fall back to stock photo APIs.")
+            print("-" * 80)
+            return
+
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Initializing FLUX model on device: {self.device}")
         try:
-            # Use bfloat16 for CUDA for better performance, float32 for CPU
             torch_dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
-            self.pipe = FluxPipeline.from_pretrained(FLUX_MODEL_ID, torch_dtype=torch_dtype)
-            # Offload to CPU to save VRAM, can be removed if you have enough GPU memory
+            self.pipe = FluxPipeline.from_pretrained(
+                FLUX_MODEL_ID,
+                torch_dtype=torch_dtype,
+                token=HUGGING_FACE_TOKEN  # Use the token for authentication
+            )
             self.pipe.enable_model_cpu_offload()
-            print("FLUX.1-schnell model loaded successfully.")
+            print("FLUX.1-schnell model loaded successfully using token.")
         except Exception as e:
             print(f"CRITICAL: Failed to load FLUX.1-schnell model: {e}")
-            print("Image generation will fall back to stock photo APIs.")
+            print("Please ensure you have accepted the terms on the model page and the token is correct.")
             self.pipe = None
 
     def generate_image(self, prompt):
@@ -391,7 +392,6 @@ class FluxImageGenerator:
             return None
         try:
             print(f"Generating image with FLUX model for prompt: {prompt[:80]}...")
-            # Use a random seed for variety
             generator = torch.Generator(device="cpu").manual_seed(random.randint(0, 2**32 - 1))
             image = self.pipe(
                 prompt=prompt, guidance_scale=0.0, num_inference_steps=4,
@@ -402,24 +402,21 @@ class FluxImageGenerator:
         except Exception as e:
             print(f"Error during FLUX image generation: {e}")
             return None
-# --- END NEW ---
 
 
 class ImageFetcher:
-    """Fetches images from Pexels, Unsplash, Openverse, and Pixabay."""
+    """Fetches images from Pexels as a fallback."""
     def __init__(self):
         self.pexels_api_key = PEXELS_API_KEY
         self.pexels_api_url = PEXELS_API_URL
-        self.unsplash_access_key = UNSPLASH_ACCESS_KEY
-        self.unsplash_api_url = UNSPLASH_API_URL
-        self.openverse_api_url = OPENVERSE_API_URL
-        self.pixabay_api_key = PIXABAY_API_KEY
-        self.pixabay_api_url = PIXABAY_API_URL
 
-    def _fetch_from_pexels(self, prompt, width, height):
+    def fetch_image(self, prompt, width=IMAGE_DISPLAY_WIDTH, height=IMAGE_DISPLAY_HEIGHT):
         """Attempts to fetch an image from Pexels."""
         try:
-            if not self.pexels_api_key: return None
+            if not self.pexels_api_key or "YOUR_" in self.pexels_api_key:
+                print("PEXELS_API_KEY is not set. Skipping Pexels.")
+                return None
+
             headers = {"Authorization": self.pexels_api_key}
             params = {"query": prompt, "orientation": "portrait", "size": "large", "per_page": 1}
             print(f"Searching Pexels for image with prompt: {prompt[:50]}...")
@@ -435,32 +432,6 @@ class ImageFetcher:
         except Exception as e:
             print(f"Error fetching from Pexels: {e}")
             return None
-
-    def _fetch_from_unsplash(self, prompt, width, height):
-        """Attempts to fetch an image from Unsplash."""
-        try:
-            if not self.unsplash_access_key: return None
-            params = {"query": prompt, "orientation": "portrait", "client_id": self.unsplash_access_key, "per_page": 1}
-            print(f"Searching Unsplash for image with prompt: {prompt[:50]}...")
-            response = requests.get(f"{self.unsplash_api_url}/search/photos", params=params, timeout=15)
-            response.raise_for_status()
-            data = response.json()
-            if data and data['results']:
-                image_url = data['results'][0]['urls']['regular']
-                img_data = requests.get(image_url, stream=True, timeout=15)
-                img_data.raise_for_status()
-                return Image.open(io.BytesIO(img_data.content))
-            return None
-        except Exception as e:
-            print(f"Error fetching from Unsplash: {e}")
-            return None
-
-    def fetch_image(self, prompt, width=IMAGE_DISPLAY_WIDTH, height=IMAGE_DISPLAY_HEIGHT):
-        """Attempts to fetch an image, prioritizing Pexels, then Unsplash."""
-        fetched_image = self._fetch_from_pexels(prompt, width, height)
-        if fetched_image is None:
-            fetched_image = self._fetch_from_unsplash(prompt, width, height)
-        return fetched_image
 
 
 class ImageLocalProcessor:
@@ -490,7 +461,7 @@ class ImageLocalProcessor:
             final_canvas = background_gen.generate_gradient_background(CANVAS_WIDTH, CANVAS_HEIGHT, COLOR_GRADIENT_TOP_LEFT, COLOR_GRADIENT_BOTTOM_RIGHT)
             draw = ImageDraw.Draw(final_canvas)
             dummy_draw_for_text_bbox = ImageDraw.Draw(Image.new('RGB', (1,1)))
-            content_type_display = post_data.get('content_type_display', 'NEWS').upper().replace('_', ' ')
+            content_type_display = post_data.get('type', 'NEWS').upper().replace('_', ' ')
             font_top_left_text = load_font(FONT_PATH_BOLD, FONT_SIZE_TOP_LEFT_TEXT)
             draw.text((TOP_LEFT_TEXT_POS_X, TOP_LEFT_TEXT_POS_Y), content_type_display, font=font_top_left_text, fill=COLOR_LIGHT_GRAY_TEXT)
             timestamp_text = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -567,7 +538,7 @@ class CloudinaryUploader:
     def upload_image(self, image_path, public_id, folder="news_posts"):
         """Uploads an image to Cloudinary."""
         try:
-            if not CLOUDINARY_CLOUD_NAME or not CLOUDINARY_API_KEY or not CLOUDINARY_API_SECRET:
+            if not CLOUDINARY_CLOUD_NAME or "YOUR_" in CLOUDINARY_CLOUD_NAME:
                 print("Cloudinary credentials are not set. Skipping upload.")
                 return None
             print(f"Uploading {image_path} to Cloudinary folder '{folder}' with public_id '{public_id}'...")
@@ -593,7 +564,7 @@ class InstagramPoster:
 
     def post_image(self, image_url, caption):
         """Posts an image to Instagram."""
-        if not self.access_token or not self.instagram_business_account_id or self.instagram_business_account_id == "YOUR_INSTAGRAM_BUSINESS_ACCOUNT_ID":
+        if not self.access_token or "YOUR_" in self.access_token or not self.instagram_business_account_id or "YOUR_" in self.instagram_business_account_id:
             print("Instagram credentials not set. Skipping post.")
             return False
         if not image_url:
@@ -697,7 +668,6 @@ class LocalSaver:
         return []
 
 
-# --- RESTORED: Weekly Analysis Functions ---
 def _load_style_recommendations():
     """Loads the last saved style recommendations from a JSON file."""
     if os.path.exists(STYLE_RECOMMENDATIONS_FILE):
@@ -723,7 +693,7 @@ def perform_weekly_analysis(mistral_client, local_saver_instance):
     print("\n--- Performing Weekly Performance Analysis ---")
     all_posts_data = local_saver_instance.load_all_posts_data()
     one_week_ago = datetime.now(UTC) - timedelta(days=WEEKLY_ANALYSIS_INTERVAL_DAYS)
-    past_week_posts = [p for p in all_posts_data if 'Timestamp' in p and datetime.fromisoformat(p['Timestamp']) >= one_week_ago]
+    past_week_posts = [p for p in all_posts_data if 'Timestamp' in p and datetime.fromisoformat(p['Timestamp'].replace("Z", "+00:00")) >= one_week_ago]
 
     if not past_week_posts:
         print("No posts found from the last week to analyze.")
@@ -761,13 +731,15 @@ def check_api_keys():
         warnings.append("Cloudinary credentials are not set.")
     if not FB_PAGE_ACCESS_TOKEN or "YOUR_" in FB_PAGE_ACCESS_TOKEN:
         warnings.append("Instagram credentials are not set.")
+    if ENABLE_FLUX_IMAGE_GENERATION and (not HUGGING_FACE_TOKEN or "YOUR_" in HUGGING_FACE_TOKEN):
+        warnings.append("HUGGING_FACE_TOKEN is not set for FLUX model.")
 
     if warnings:
         print("\n--- API KEY WARNINGS ---")
         for warning in warnings:
             print(f"- {warning}")
         print("------------------------\n")
-        input("Press Enter to continue (or Ctrl+C to exit)...")
+        # input("Press Enter to continue (or Ctrl+C to exit)...") # Pausing can be an issue in CI/CD
 
 # --- Main Workflow Execution ---
 if __name__ == "__main__":
@@ -784,11 +756,9 @@ if __name__ == "__main__":
     local_saver = LocalSaver(IMAGE_OUTPUT_DIR, JSON_OUTPUT_DIR, EXCEL_OUTPUT_DIR, ALL_POSTS_JSON_FILE, ALL_POSTS_EXCEL_FILE)
     mistral_client_for_analysis = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=OPENROUTER_MISTRAL_API_KEY)
 
-    # --- NEW: Initialize FLUX Image Generator ---
     flux_image_gen = None
     if ENABLE_FLUX_IMAGE_GENERATION and FLUX_LIBRARIES_AVAILABLE:
         flux_image_gen = FluxImageGenerator()
-    # --- END NEW ---
 
     try:
         recommendation_text_for_llm = _load_style_recommendations().get('weekly_analysis', '')
@@ -818,7 +788,6 @@ if __name__ == "__main__":
         post_data['title'], post_data['summary'] = title, summary
         print(f"Generated Title: {title}\nGenerated Summary: {summary}")
 
-        # --- MODIFIED: New Image Generation Flow ---
         pil_image = None
         if flux_image_gen and flux_image_gen.pipe:
             img_prompt, prompt_ok = caption_generator.generate_image_prompt(title, summary)
@@ -865,6 +834,5 @@ if __name__ == "__main__":
 
     except Exception as e:
         print(f"\nAn unhandled error occurred: {e}")
-        import traceback
         traceback.print_exc()
         sys.exit(1)
