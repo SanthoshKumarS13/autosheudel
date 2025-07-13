@@ -22,20 +22,19 @@ CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "YOUR_CLOUDINARY_API_
 FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN", "YOUR_FB_PAGE_ACCESS_TOKEN")
 INSTAGRAM_BUSINESS_ACCOUNT_ID = os.getenv("INSTAGRAM_BUSINESS_ACCOUNT_ID", "YOUR_INSTAGRAM_BUSINESS_ACCOUNT_ID")
 
-# --- Hugging Face Image Generation ---
+# --- Hugging Face Inference API ---
 ENABLE_AI_IMAGE_GENERATION = True
+# A list of Inference API endpoints to try in order.
+# Note: Larger models like FLUX may be slow or time out on the free tier.
+INFERENCE_API_ENDPOINTS = [
+    "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell",
+    "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-3-medium-diffusers",
+    "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
+    "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5",
+    "https://api-inference.huggingface.co/models/CompVis/stable-diffusion-v1-4"
+]
 # The script will use the HF_TOKEN secret from your GitHub repository settings.
 HUGGING_FACE_TOKEN = os.getenv("HF_TOKEN")
-
-# List of models to try in order. If one fails, it will try the next.
-# These models require you to accept their terms on their Hugging Face pages.
-AI_IMAGE_MODELS_TO_TRY = [
-    "black-forest-labs/FLUX.1-dev",
-    "stabilityai/stable-diffusion-3-medium-diffusers", # Using medium as it's more resource-friendly
-    "stabilityai/stable-diffusion-xl-base-1.0",
-    "CompVis/stable-diffusion-v1-4",
-    "runwayml/stable-diffusion-v1-5" # Corrected model ID
-]
 
 
 # --- Output Directories and Files ---
