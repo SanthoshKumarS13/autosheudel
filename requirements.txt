@@ -4,4 +4,3 @@ Pillow
 feedparser
 openai
 cloudinary
-openpyxl
